@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Frameboard Studio</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Creative direction storyboard</p>
+        <h1>Frameboard Studio</h1>
+      </div>
+      <div class="topbar-actions">
+        <button class="ghost" id="importBtn" type="button" title="Import project">
+          <span aria-hidden="true">↥</span>
+          Import
+        </button>
+        <button class="ghost" id="exportBtn" type="button" title="Export project">
+          <span aria-hidden="true">↧</span>
+          Export
+        </button>
+        <button class="primary" id="printBtn" type="button" title="Print storyboard">
+          <span aria-hidden="true">▣</span>
+          Print
+        </button>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <aside class="panel editor-panel" aria-label="Shot editor">
+        <form id="shotForm" autocomplete="off">
+          <div class="form-heading">
+            <div>
+              <p class="eyebrow">Shot builder</p>
+              <h2 id="formTitle">New shot</h2>
+            </div>
+            <button class="ghost icon-button" id="resetFormBtn" type="button" title="Start a new shot">＋</button>
+          </div>
+
+          <label class="image-drop" for="imageInput">
+            <input id="imageInput" name="imageInput" type="file" accept="image/*">
+            <img id="imagePreview" alt="">
+            <span id="imagePrompt">Drop or upload reference image</span>
+          </label>
+
+          <label>
+            Shot title
+            <input id="titleInput" name="title" type="text" placeholder="Opening product reveal" required>
+          </label>
+
+          <div class="field-grid">
+            <label>
+              Shot type
+              <select id="shotTypeInput" name="shotType">
+                <option>Wide</option>
+                <option>Medium</option>
+                <option>Close-up</option>
+                <option>Extreme close-up</option>
+                <option>Over-the-shoulder</option>
+                <option>POV</option>
+                <option>Insert</option>
+                <option>Establishing</option>
+              </select>
+            </label>
+            <label>
+              Angle
+              <select id="angleInput" name="angle">
+                <option>Eye level</option>
+                <option>Low angle</option>
+                <option>High angle</option>
+                <option>Bird's-eye</option>
+                <option>Dutch</option>
+                <option>Profile</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="field-grid">
+            <label>
+              Movement
+              <input id="movementInput" name="movement" type="text" placeholder="Dolly in, handheld, static">
+            </label>
+            <label>
+              Duration
+              <input id="durationInput" name="duration" type="text" placeholder="00:05">
+            </label>
+          </div>
+
+          <div class="field-grid">
+            <label>
+              Location
+              <input id="locationInput" name="location" type="text" placeholder="Studio cyclorama">
+            </label>
+            <label>
+              Time
+              <input id="timeInput" name="time" type="text" placeholder="Golden hour">
+            </label>
+          </div>
+
+          <label>
+            Action / blocking
+            <textarea id="actionInput" name="action" rows="3" placeholder="What happens in the frame?"></textarea>
+          </label>
+
+          <label>
+            Director notes
+            <textarea id="notesInput" name="notes" rows="4" placeholder="Lens, mood, lighting, art direction, transitions"></textarea>
+          </label>
+
+          <div class="form-actions">
+            <button class="primary" id="saveShotBtn" type="submit">Add shot</button>
+            <button class="danger" id="deleteShotBtn" type="button" hidden>Delete</button>
+          </div>
+        </form>
+      </aside>
+
+      <section class="workspace" aria-label="Storyboard workspace">
+        <div class="project-bar">
+          <label>
+            Project
+            <input id="projectTitleInput" type="text" placeholder="Campaign storyboard">
+          </label>
+          <label>
+            Client
+            <input id="clientInput" type="text" placeholder="Client or brand">
+          </label>
+          <label>
+            Version
+            <input id="versionInput" type="text" placeholder="v1">
+          </label>
+        </div>
+
+        <div class="toolbar">
+          <div class="segmented" role="tablist" aria-label="View mode">
+            <button class="active" id="gridViewBtn" type="button">Grid</button>
+            <button id="listViewBtn" type="button">List</button>
+          </div>
+          <label class="search">
+            <span aria-hidden="true">⌕</span>
+            <input id="searchInput" type="search" placeholder="Search shots, notes, locations">
+          </label>
+          <button class="ghost" id="clearBtn" type="button">Clear board</button>
+        </div>
+
+        <div class="board-meta">
+          <span id="shotCount">0 shots</span>
+          <span id="saveState">Saved locally</span>
+        </div>
+
+        <div id="emptyState" class="empty-state">
+          <h2>Build a visual board shot by shot.</h2>
+          <p>Add a reference image, capture the essentials, then export or print a clean storyboard for your pitch, treatment, or production plan.</p>
+        </div>
+
+        <div id="shotBoard" class="shot-board grid-view" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <input id="importInput" type="file" accept="application/json" hidden>
+
+    <template id="shotCardTemplate">
+      <article class="shot-card">
+        <button class="shot-image-button" type="button" title="Edit shot">
+          <img class="shot-image" alt="">
+          <span class="shot-placeholder">No image</span>
+        </button>
+        <div class="shot-content">
+          <div class="shot-title-row">
+            <span class="shot-number"></span>
+            <h3></h3>
+          </div>
+          <dl class="shot-specs"></dl>
+          <p class="shot-action"></p>
+          <p class="shot-notes"></p>
+        </div>
+        <div class="shot-controls">
+          <button type="button" data-action="up" title="Move earlier">↑</button>
+          <button type="button" data-action="down" title="Move later">↓</button>
+          <button type="button" data-action="duplicate" title="Duplicate">⧉</button>
+          <button type="button" data-action="edit" title="Edit">✎</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
