@@ -11,6 +11,8 @@ A personal storyboard web app for creative direction work. It runs entirely in t
 - Local browser autosave
 - Import and export project JSON files
 - Print-ready storyboard layout
+- Brainstorm notes editor with headers, bold, italic, underline, highlight, and images
+- Separate exports for the full project, storyboard board, and brainstorm notes
 
 ## Deploy on GitHub Pages
 

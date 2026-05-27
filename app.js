@@ -7,6 +7,9 @@ const state = {
     version: ""
   },
   shots: [],
+  brainstorm: {
+    html: ""
+  },
   editingId: null,
   draftImage: "",
   view: "grid",
@@ -41,7 +44,13 @@ const els = {
   clear: document.querySelector("#clearBtn"),
   importBtn: document.querySelector("#importBtn"),
   exportBtn: document.querySelector("#exportBtn"),
+  exportStoryboard: document.querySelector("#exportStoryboardBtn"),
   importInput: document.querySelector("#importInput"),
+  brainstormEditor: document.querySelector("#brainstormEditor"),
+  blockFormat: document.querySelector("#blockFormatInput"),
+  insertBrainstormImage: document.querySelector("#insertBrainstormImageBtn"),
+  brainstormImageInput: document.querySelector("#brainstormImageInput"),
+  exportBrainstorm: document.querySelector("#exportBrainstormBtn"),
   print: document.querySelector("#printBtn"),
   shotBoard: document.querySelector("#shotBoard"),
   emptyState: document.querySelector("#emptyState"),
@@ -62,6 +71,7 @@ function loadProject() {
     const parsed = JSON.parse(stored);
     state.project = { ...state.project, ...parsed.project };
     state.shots = Array.isArray(parsed.shots) ? parsed.shots : [];
+    state.brainstorm.html = sanitizeBrainstormHtml(parsed.brainstorm?.html || "");
     state.view = parsed.view === "list" ? "list" : "grid";
   } catch {
     localStorage.removeItem(STORAGE_KEY);
@@ -72,6 +82,7 @@ function saveProject() {
   const payload = {
     project: state.project,
     shots: state.shots,
+    brainstorm: state.brainstorm,
     view: state.view,
     exportedAt: new Date().toISOString()
   };
@@ -199,10 +210,96 @@ function escapeHtml(value) {
   });
 }
 
+function sanitizeBrainstormHtml(html) {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  template.content.querySelectorAll("script, style, iframe, object, embed, link, meta").forEach((node) => node.remove());
+  template.content.querySelectorAll("*").forEach((node) => {
+    [...node.attributes].forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim().toLowerCase();
+      if (name.startsWith("on") || value.startsWith("javascript:")) {
+        node.removeAttribute(attribute.name);
+      }
+    });
+  });
+  return template.innerHTML;
+}
+
+function saveBrainstorm() {
+  state.brainstorm.html = sanitizeBrainstormHtml(els.brainstormEditor.innerHTML);
+  saveProject();
+}
+
+function insertBrainstormHtml(html) {
+  els.brainstormEditor.focus();
+  document.execCommand("insertHTML", false, html);
+  saveBrainstorm();
+}
+
+function projectFilename(label) {
+  return `${state.project.title || label}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || label;
+}
+
+function projectPayload(include) {
+  const payload = {
+    project: state.project,
+    exportedAt: new Date().toISOString(),
+    exportType: include
+  };
+
+  if (include === "full" || include === "storyboard") {
+    payload.shots = state.shots;
+    payload.view = state.view;
+  }
+
+  if (include === "full" || include === "brainstorm") {
+    payload.brainstorm = {
+      html: sanitizeBrainstormHtml(els.brainstormEditor.innerHTML)
+    };
+  }
+
+  return payload;
+}
+
+function exportJson(include, suffix) {
+  const filename = `${projectFilename("frameboard")}-${suffix}.json`;
+  downloadFile(filename, JSON.stringify(projectPayload(include), null, 2), "application/json");
+}
+
+function exportBrainstormHtml() {
+  const title = escapeHtml(state.project.title || "Frameboard brainstorm");
+  const content = sanitizeBrainstormHtml(state.brainstorm.html || els.brainstormEditor.innerHTML);
+  const documentHtml = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${title}</title>
+  <style>
+    body { color: #172026; font-family: Arial, sans-serif; line-height: 1.6; margin: 40px; }
+    img { max-width: 100%; border-radius: 8px; }
+    mark { background: #ffe58a; }
+  </style>
+</head>
+<body>
+  <h1>${title}</h1>
+  ${content || "<p>No brainstorm notes yet.</p>"}
+</body>
+</html>`;
+  downloadFile(`${projectFilename("brainstorm")}-notes.html`, documentHtml, "text/html");
+}
+
 function render() {
   els.projectTitle.value = state.project.title;
   els.client.value = state.project.client;
   els.version.value = state.project.version;
+  if (els.brainstormEditor.innerHTML !== state.brainstorm.html) {
+    els.brainstormEditor.innerHTML = state.brainstorm.html;
+  }
 
   els.shotBoard.className = `shot-board ${state.view}-view`;
   els.gridView.classList.toggle("active", state.view === "grid");
@@ -376,16 +473,11 @@ els.clear.addEventListener("click", () => {
 });
 
 els.exportBtn.addEventListener("click", () => {
-  const filename = `${state.project.title || "storyboard"}-frameboard.json`
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-  downloadFile(`${filename || "storyboard"}.json`, JSON.stringify({
-    project: state.project,
-    shots: state.shots,
-    view: state.view,
-    exportedAt: new Date().toISOString()
-  }, null, 2), "application/json");
+  exportJson("full", "full-project");
+});
+
+els.exportStoryboard.addEventListener("click", () => {
+  exportJson("storyboard", "storyboard");
 });
 
 els.importBtn.addEventListener("click", () => els.importInput.click());
@@ -396,7 +488,12 @@ els.importInput.addEventListener("change", async (event) => {
   const text = await file.text();
   const imported = JSON.parse(text);
   state.project = { ...state.project, ...imported.project };
-  state.shots = Array.isArray(imported.shots) ? imported.shots : [];
+  if (Array.isArray(imported.shots)) {
+    state.shots = imported.shots;
+  }
+  if (imported.brainstorm) {
+    state.brainstorm.html = sanitizeBrainstormHtml(imported.brainstorm.html || "");
+  }
   state.view = imported.view === "list" ? "list" : "grid";
   state.query = "";
   els.search.value = "";
@@ -407,6 +504,56 @@ els.importInput.addEventListener("change", async (event) => {
 });
 
 els.print.addEventListener("click", () => window.print());
+
+els.brainstormEditor.addEventListener("input", saveBrainstorm);
+
+els.brainstormEditor.addEventListener("paste", async (event) => {
+  const imageFiles = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/"));
+  if (!imageFiles.length) {
+    window.setTimeout(saveBrainstorm, 0);
+    return;
+  }
+
+  event.preventDefault();
+  for (const file of imageFiles) {
+    const image = await resizeImage(file);
+    insertBrainstormHtml(`<img src="${image}" alt="Pasted brainstorm reference">`);
+  }
+});
+
+document.querySelectorAll("[data-command]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const command = button.dataset.command;
+    if (command === "highlight") {
+      document.execCommand("backColor", false, "#ffe58a");
+    } else {
+      document.execCommand(command, false, null);
+    }
+    saveBrainstorm();
+  });
+});
+
+els.blockFormat.addEventListener("change", () => {
+  document.execCommand("formatBlock", false, els.blockFormat.value);
+  els.brainstormEditor.focus();
+  saveBrainstorm();
+});
+
+els.insertBrainstormImage.addEventListener("click", () => els.brainstormImageInput.click());
+
+els.brainstormImageInput.addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const image = await resizeImage(file);
+  insertBrainstormHtml(`<img src="${image}" alt="Brainstorm reference">`);
+  event.target.value = "";
+});
+
+els.exportBrainstorm.addEventListener("click", () => {
+  state.brainstorm.html = sanitizeBrainstormHtml(els.brainstormEditor.innerHTML);
+  saveProject();
+  exportBrainstormHtml();
+});
 
 loadProject();
 render();

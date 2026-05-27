@@ -19,7 +19,7 @@
         </button>
         <button class="ghost" id="exportBtn" type="button" title="Export project">
           <span aria-hidden="true">↧</span>
-          Export
+          Export all
         </button>
         <button class="primary" id="printBtn" type="button" title="Print storyboard">
           <span aria-hidden="true">▣</span>
@@ -141,6 +141,7 @@
             <span aria-hidden="true">⌕</span>
             <input id="searchInput" type="search" placeholder="Search shots, notes, locations">
           </label>
+          <button class="ghost" id="exportStoryboardBtn" type="button">Export board</button>
           <button class="ghost" id="clearBtn" type="button">Clear board</button>
         </div>
 
@@ -155,10 +156,43 @@
         </div>
 
         <div id="shotBoard" class="shot-board grid-view" aria-live="polite"></div>
+
+        <section class="brainstorm-panel" aria-label="Brainstorm notes">
+          <div class="brainstorm-heading">
+            <div>
+              <p class="eyebrow">Brainstorm</p>
+              <h2>Creative notes</h2>
+            </div>
+            <button class="ghost" id="exportBrainstormBtn" type="button">Export notes</button>
+          </div>
+
+          <div class="brainstorm-toolbar" aria-label="Brainstorm formatting tools">
+            <select id="blockFormatInput" title="Text style">
+              <option value="P">Body</option>
+              <option value="H2">Header</option>
+              <option value="H3">Subheader</option>
+            </select>
+            <button type="button" data-command="bold" title="Bold">B</button>
+            <button type="button" data-command="italic" title="Italic"><i>I</i></button>
+            <button type="button" data-command="underline" title="Underline"><u>U</u></button>
+            <button type="button" data-command="highlight" title="Highlight">HL</button>
+            <button type="button" id="insertBrainstormImageBtn" title="Insert image">Image</button>
+          </div>
+
+          <article
+            id="brainstormEditor"
+            class="brainstorm-editor"
+            contenteditable="true"
+            spellcheck="true"
+            aria-label="Brainstorm editor"
+            data-placeholder="Write ideas, references, treatments, copy lines, rough concepts, or paste images here."
+          ></article>
+        </section>
       </section>
     </main>
 
     <input id="importInput" type="file" accept="application/json" hidden>
+    <input id="brainstormImageInput" type="file" accept="image/*" hidden>
 
     <template id="shotCardTemplate">
       <article class="shot-card">
