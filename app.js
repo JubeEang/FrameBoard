@@ -4,7 +4,8 @@ const state = {
   project: {
     title: "",
     client: "",
-    version: ""
+    version: "",
+    format: "horizontal"
   },
   shots: [],
   brainstorm: {
@@ -38,6 +39,7 @@ const els = {
   projectTitle: document.querySelector("#projectTitleInput"),
   client: document.querySelector("#clientInput"),
   version: document.querySelector("#versionInput"),
+  format: document.querySelector("#formatInput"),
   gridView: document.querySelector("#gridViewBtn"),
   listView: document.querySelector("#listViewBtn"),
   search: document.querySelector("#searchInput"),
@@ -70,6 +72,7 @@ function loadProject() {
   try {
     const parsed = JSON.parse(stored);
     state.project = { ...state.project, ...parsed.project };
+    state.project.format = state.project.format === "vertical" ? "vertical" : "horizontal";
     state.shots = Array.isArray(parsed.shots) ? parsed.shots : [];
     state.brainstorm.html = sanitizeBrainstormHtml(parsed.brainstorm?.html || "");
     state.view = parsed.view === "list" ? "list" : "grid";
@@ -297,6 +300,8 @@ function render() {
   els.projectTitle.value = state.project.title;
   els.client.value = state.project.client;
   els.version.value = state.project.version;
+  els.format.value = state.project.format;
+  document.body.dataset.format = state.project.format;
   if (els.brainstormEditor.innerHTML !== state.brainstorm.html) {
     els.brainstormEditor.innerHTML = state.brainstorm.html;
   }
@@ -437,13 +442,18 @@ els.imageDrop.addEventListener("drop", async (event) => {
   updateImagePreview();
 });
 
-[els.projectTitle, els.client, els.version].forEach((input) => {
-  input.addEventListener("input", () => {
-    state.project.title = els.projectTitle.value;
-    state.project.client = els.client.value;
-    state.project.version = els.version.value;
-    saveProject();
-  });
+function saveProjectMeta() {
+  state.project.title = els.projectTitle.value;
+  state.project.client = els.client.value;
+  state.project.version = els.version.value;
+  state.project.format = els.format.value;
+  document.body.dataset.format = state.project.format;
+  saveProject();
+}
+
+[els.projectTitle, els.client, els.version, els.format].forEach((input) => {
+  input.addEventListener("input", saveProjectMeta);
+  input.addEventListener("change", saveProjectMeta);
 });
 
 els.gridView.addEventListener("click", () => {
@@ -488,6 +498,7 @@ els.importInput.addEventListener("change", async (event) => {
   const text = await file.text();
   const imported = JSON.parse(text);
   state.project = { ...state.project, ...imported.project };
+  state.project.format = state.project.format === "vertical" ? "vertical" : "horizontal";
   if (Array.isArray(imported.shots)) {
     state.shots = imported.shots;
   }

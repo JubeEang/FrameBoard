@@ -5,6 +5,7 @@ A personal storyboard web app for creative direction work. It runs entirely in t
 ## Features
 
 - Upload reference images for each shot
+- Choose horizontal 16:9 or vertical 9:16 storyboard format
 - Track shot type, angle, movement, duration, location, time, action, and notes
 - Reorder, duplicate, edit, and delete shots
 - Grid and list views
