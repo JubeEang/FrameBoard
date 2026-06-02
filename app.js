@@ -5,7 +5,8 @@ const state = {
     title: "",
     client: "",
     version: "",
-    format: "horizontal"
+    format: "horizontal",
+    printProfile: "client"
   },
   shots: [],
   brainstorm: {
@@ -40,13 +41,16 @@ const els = {
   client: document.querySelector("#clientInput"),
   version: document.querySelector("#versionInput"),
   format: document.querySelector("#formatInput"),
+  printProfile: document.querySelector("#printProfileInput"),
   gridView: document.querySelector("#gridViewBtn"),
   listView: document.querySelector("#listViewBtn"),
+  tableView: document.querySelector("#tableViewBtn"),
   search: document.querySelector("#searchInput"),
   clear: document.querySelector("#clearBtn"),
   importBtn: document.querySelector("#importBtn"),
   exportBtn: document.querySelector("#exportBtn"),
   exportStoryboard: document.querySelector("#exportStoryboardBtn"),
+  exportCsv: document.querySelector("#exportCsvBtn"),
   importInput: document.querySelector("#importInput"),
   brainstormEditor: document.querySelector("#brainstormEditor"),
   blockFormat: document.querySelector("#blockFormatInput"),
@@ -55,6 +59,8 @@ const els = {
   exportBrainstorm: document.querySelector("#exportBrainstormBtn"),
   print: document.querySelector("#printBtn"),
   shotBoard: document.querySelector("#shotBoard"),
+  shotTableWrap: document.querySelector("#shotTableWrap"),
+  shotTableBody: document.querySelector("#shotTableBody"),
   emptyState: document.querySelector("#emptyState"),
   shotCount: document.querySelector("#shotCount"),
   saveState: document.querySelector("#saveState"),
@@ -73,9 +79,10 @@ function loadProject() {
     const parsed = JSON.parse(stored);
     state.project = { ...state.project, ...parsed.project };
     state.project.format = state.project.format === "vertical" ? "vertical" : "horizontal";
+    state.project.printProfile = state.project.printProfile === "internal" ? "internal" : "client";
     state.shots = Array.isArray(parsed.shots) ? parsed.shots : [];
     state.brainstorm.html = sanitizeBrainstormHtml(parsed.brainstorm?.html || "");
-    state.view = parsed.view === "list" ? "list" : "grid";
+    state.view = ["grid", "list", "table"].includes(parsed.view) ? parsed.view : "grid";
   } catch {
     localStorage.removeItem(STORAGE_KEY);
   }
@@ -273,6 +280,40 @@ function exportJson(include, suffix) {
   downloadFile(filename, JSON.stringify(projectPayload(include), null, 2), "application/json");
 }
 
+function csvCell(value) {
+  const text = String(value || "").replace(/\r?\n/g, " ");
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function exportShotListCsv() {
+  const headers = [
+    "Shot #",
+    "Title",
+    "Shot type",
+    "Angle",
+    "Movement",
+    "Duration",
+    "Location",
+    "Time",
+    "Action",
+    "Director notes"
+  ];
+  const rows = state.shots.map((shot, index) => [
+    String(index + 1).padStart(2, "0"),
+    shot.title,
+    shot.shotType,
+    shot.angle,
+    shot.movement,
+    shot.duration,
+    shot.location,
+    shot.time,
+    shot.action,
+    shot.notes
+  ]);
+  const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+  downloadFile(`${projectFilename("shot-list")}-shot-list.csv`, csv, "text/csv");
+}
+
 function exportBrainstormHtml() {
   const title = escapeHtml(state.project.title || "Frameboard brainstorm");
   const content = sanitizeBrainstormHtml(state.brainstorm.html || els.brainstormEditor.innerHTML);
@@ -301,7 +342,9 @@ function render() {
   els.client.value = state.project.client;
   els.version.value = state.project.version;
   els.format.value = state.project.format;
+  els.printProfile.value = state.project.printProfile;
   document.body.dataset.format = state.project.format;
+  document.body.dataset.printProfile = state.project.printProfile;
   if (els.brainstormEditor.innerHTML !== state.brainstorm.html) {
     els.brainstormEditor.innerHTML = state.brainstorm.html;
   }
@@ -309,11 +352,37 @@ function render() {
   els.shotBoard.className = `shot-board ${state.view}-view`;
   els.gridView.classList.toggle("active", state.view === "grid");
   els.listView.classList.toggle("active", state.view === "list");
+  els.tableView.classList.toggle("active", state.view === "table");
 
   const filtered = getFilteredShots();
   els.emptyState.hidden = state.shots.length > 0;
   els.shotCount.textContent = `${state.shots.length} ${state.shots.length === 1 ? "shot" : "shots"}`;
+  els.shotBoard.hidden = state.view === "table";
+  els.shotTableWrap.hidden = state.view !== "table";
   els.shotBoard.replaceChildren(...filtered.map(renderShotCard));
+  renderShotTable(filtered);
+}
+
+function renderShotTable(shots) {
+  const rows = shots.map((shot) => {
+    const index = state.shots.indexOf(shot);
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${String(index + 1).padStart(2, "0")}</td>
+      <td><button type="button" class="table-edit-button">${escapeHtml(shot.title || "Untitled shot")}</button></td>
+      <td>${escapeHtml(shot.shotType || "")}</td>
+      <td>${escapeHtml(shot.angle || "")}</td>
+      <td>${escapeHtml(shot.movement || "")}</td>
+      <td>${escapeHtml(shot.duration || "")}</td>
+      <td>${escapeHtml(shot.location || "")}</td>
+      <td>${escapeHtml(shot.time || "")}</td>
+      <td>${escapeHtml(shot.action || "")}</td>
+      <td>${escapeHtml(shot.notes || "")}</td>
+    `;
+    row.querySelector(".table-edit-button").addEventListener("click", () => editShot(shot.id));
+    return row;
+  });
+  els.shotTableBody.replaceChildren(...rows);
 }
 
 function renderShotCard(shot) {
@@ -447,11 +516,13 @@ function saveProjectMeta() {
   state.project.client = els.client.value;
   state.project.version = els.version.value;
   state.project.format = els.format.value;
+  state.project.printProfile = els.printProfile.value;
   document.body.dataset.format = state.project.format;
+  document.body.dataset.printProfile = state.project.printProfile;
   saveProject();
 }
 
-[els.projectTitle, els.client, els.version, els.format].forEach((input) => {
+[els.projectTitle, els.client, els.version, els.format, els.printProfile].forEach((input) => {
   input.addEventListener("input", saveProjectMeta);
   input.addEventListener("change", saveProjectMeta);
 });
@@ -464,6 +535,12 @@ els.gridView.addEventListener("click", () => {
 
 els.listView.addEventListener("click", () => {
   state.view = "list";
+  saveProject();
+  render();
+});
+
+els.tableView.addEventListener("click", () => {
+  state.view = "table";
   saveProject();
   render();
 });
@@ -490,6 +567,8 @@ els.exportStoryboard.addEventListener("click", () => {
   exportJson("storyboard", "storyboard");
 });
 
+els.exportCsv.addEventListener("click", exportShotListCsv);
+
 els.importBtn.addEventListener("click", () => els.importInput.click());
 
 els.importInput.addEventListener("change", async (event) => {
@@ -499,13 +578,14 @@ els.importInput.addEventListener("change", async (event) => {
   const imported = JSON.parse(text);
   state.project = { ...state.project, ...imported.project };
   state.project.format = state.project.format === "vertical" ? "vertical" : "horizontal";
+  state.project.printProfile = state.project.printProfile === "internal" ? "internal" : "client";
   if (Array.isArray(imported.shots)) {
     state.shots = imported.shots;
   }
   if (imported.brainstorm) {
     state.brainstorm.html = sanitizeBrainstormHtml(imported.brainstorm.html || "");
   }
-  state.view = imported.view === "list" ? "list" : "grid";
+  state.view = ["grid", "list", "table"].includes(imported.view) ? imported.view : "grid";
   state.query = "";
   els.search.value = "";
   saveProject();

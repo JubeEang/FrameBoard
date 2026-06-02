@@ -137,18 +137,27 @@
               <option value="vertical">Vertical 9:16</option>
             </select>
           </label>
+          <label class="print-profile-field">
+            Print profile
+            <select id="printProfileInput">
+              <option value="client">Client PDF</option>
+              <option value="internal">Internal PDF</option>
+            </select>
+          </label>
         </div>
 
         <div class="toolbar">
           <div class="segmented" role="tablist" aria-label="View mode">
             <button class="active" id="gridViewBtn" type="button">Grid</button>
             <button id="listViewBtn" type="button">List</button>
+            <button id="tableViewBtn" type="button">Table</button>
           </div>
           <label class="search">
             <span aria-hidden="true">⌕</span>
             <input id="searchInput" type="search" placeholder="Search shots, notes, locations">
           </label>
           <button class="ghost" id="exportStoryboardBtn" type="button">Export board</button>
+          <button class="ghost" id="exportCsvBtn" type="button">Export CSV</button>
           <button class="ghost" id="clearBtn" type="button">Clear board</button>
         </div>
 
@@ -163,6 +172,26 @@
         </div>
 
         <div id="shotBoard" class="shot-board grid-view" aria-live="polite"></div>
+
+        <div id="shotTableWrap" class="shot-table-wrap" hidden>
+          <table class="shot-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Shot</th>
+                <th>Type</th>
+                <th>Angle</th>
+                <th>Movement</th>
+                <th>Duration</th>
+                <th>Location</th>
+                <th>Time</th>
+                <th>Action</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody id="shotTableBody"></tbody>
+          </table>
+        </div>
 
         <section class="brainstorm-panel" aria-label="Brainstorm notes">
           <div class="brainstorm-heading">

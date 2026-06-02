@@ -9,8 +9,10 @@ A personal storyboard web app for creative direction work. It runs entirely in t
 - Track shot type, angle, movement, duration, location, time, action, and notes
 - Reorder, duplicate, edit, and delete shots
 - Grid and list views
+- Production shot list table view
 - Local browser autosave
 - Import and export project JSON files
+- Shot list CSV export
 - Print-ready storyboard layout
 - Brainstorm notes editor with headers, bold, italic, underline, highlight, and images
 - Separate exports for the full project, storyboard board, and brainstorm notes

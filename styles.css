@@ -219,7 +219,7 @@ textarea:focus {
 }
 
 .project-bar {
-  grid-template-columns: 2fr 1fr 0.7fr 1fr;
+  grid-template-columns: 2fr 1fr 0.7fr 1fr 1fr;
   padding: 16px;
 }
 
@@ -471,6 +471,52 @@ body[data-format="vertical"] .shot-image-button {
   padding: 0;
 }
 
+.shot-table-wrap {
+  overflow: auto;
+  border: 1px solid rgba(23, 32, 38, 0.1);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 12px 34px rgba(23, 32, 38, 0.09);
+}
+
+.shot-table {
+  width: 100%;
+  min-width: 1080px;
+  border-collapse: collapse;
+}
+
+.shot-table th,
+.shot-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+  font-size: 0.84rem;
+}
+
+.shot-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--muted);
+  background: #f6f8f5;
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.shot-table tr:hover td {
+  background: #fbfaf6;
+}
+
+.table-edit-button {
+  padding: 0;
+  color: var(--accent-dark);
+  background: transparent;
+  font-weight: 900;
+  text-align: left;
+}
+
 .brainstorm-panel {
   display: grid;
   gap: 14px;
@@ -608,6 +654,7 @@ body[data-format="vertical"] .shot-image-button {
   .editor-panel,
   .toolbar,
   .brainstorm-toolbar,
+  .shot-table-wrap,
   .brainstorm-panel,
   .board-meta,
   .shot-controls,
@@ -642,6 +689,10 @@ body[data-format="vertical"] .shot-image-button {
   .project-bar label {
     font-size: 8pt;
     gap: 3px;
+  }
+
+  .print-profile-field {
+    display: none !important;
   }
 
   .project-bar input,
@@ -762,5 +813,9 @@ body[data-format="vertical"] .shot-image-button {
   .shot-action,
   .shot-notes {
     margin-bottom: 5px;
+  }
+
+  body[data-print-profile="client"] .shot-notes {
+    display: none !important;
   }
 }
