@@ -28,7 +28,25 @@
       </div>
     </header>
 
-    <main class="app-shell">
+    <section class="home-screen" id="homeScreen" aria-label="Projects">
+      <div class="home-heading">
+        <div>
+          <p class="eyebrow">Projects</p>
+          <h2>Choose a board</h2>
+        </div>
+        <div class="home-actions">
+          <button class="primary" id="newProjectBtn" type="button">New project</button>
+          <button class="danger" id="clearAllBtn" type="button">Clear all content</button>
+        </div>
+      </div>
+      <div id="projectList" class="project-list" aria-live="polite"></div>
+      <div id="homeEmptyState" class="empty-state">
+        <h2>No projects yet.</h2>
+        <p>Create a project to start building a storyboard, shot list, and brainstorm notes.</p>
+      </div>
+    </section>
+
+    <main class="app-shell" id="workspaceShell" hidden>
       <aside class="panel editor-panel" aria-label="Shot editor">
         <form id="shotForm" autocomplete="off">
           <div class="form-heading">
@@ -36,7 +54,10 @@
               <p class="eyebrow">Shot builder</p>
               <h2 id="formTitle">New shot</h2>
             </div>
-            <button class="ghost icon-button" id="resetFormBtn" type="button" title="Start a new shot">＋</button>
+            <div class="form-heading-actions">
+              <button class="ghost" id="backHomeBtn" type="button">Home</button>
+              <button class="ghost icon-button" id="resetFormBtn" type="button" title="Start a new shot">＋</button>
+            </div>
           </div>
 
           <label class="image-drop" for="imageInput">

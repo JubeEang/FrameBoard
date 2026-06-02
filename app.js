@@ -1,13 +1,18 @@
 const STORAGE_KEY = "frameboard-studio-project";
+const PROJECTS_KEY = "frameboard-studio-projects";
+
+const defaultProject = () => ({
+  title: "",
+  client: "",
+  version: "",
+  format: "horizontal",
+  printProfile: "client"
+});
 
 const state = {
-  project: {
-    title: "",
-    client: "",
-    version: "",
-    format: "horizontal",
-    printProfile: "client"
-  },
+  projects: [],
+  currentProjectId: null,
+  project: defaultProject(),
   shots: [],
   brainstorm: {
     html: ""
@@ -19,6 +24,13 @@ const state = {
 };
 
 const els = {
+  homeScreen: document.querySelector("#homeScreen"),
+  workspaceShell: document.querySelector("#workspaceShell"),
+  projectList: document.querySelector("#projectList"),
+  homeEmptyState: document.querySelector("#homeEmptyState"),
+  newProject: document.querySelector("#newProjectBtn"),
+  clearAll: document.querySelector("#clearAllBtn"),
+  backHome: document.querySelector("#backHomeBtn"),
   form: document.querySelector("#shotForm"),
   formTitle: document.querySelector("#formTitle"),
   imageInput: document.querySelector("#imageInput"),
@@ -71,33 +83,118 @@ function uid() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function loadProject() {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) return;
+function normalizeProjectRecord(record) {
+  const project = { ...defaultProject(), ...record.project };
+  project.format = project.format === "vertical" ? "vertical" : "horizontal";
+  project.printProfile = project.printProfile === "internal" ? "internal" : "client";
+  return {
+    id: record.id || uid(),
+    createdAt: record.createdAt || new Date().toISOString(),
+    updatedAt: record.updatedAt || new Date().toISOString(),
+    project,
+    shots: Array.isArray(record.shots) ? record.shots : [],
+    brainstorm: {
+      html: sanitizeBrainstormHtml(record.brainstorm?.html || "")
+    },
+    view: ["grid", "list", "table"].includes(record.view) ? record.view : "grid"
+  };
+}
 
+function currentProjectRecord() {
+  return state.projects.find((project) => project.id === state.currentProjectId);
+}
+
+function loadProjects() {
   try {
-    const parsed = JSON.parse(stored);
-    state.project = { ...state.project, ...parsed.project };
-    state.project.format = state.project.format === "vertical" ? "vertical" : "horizontal";
-    state.project.printProfile = state.project.printProfile === "internal" ? "internal" : "client";
-    state.shots = Array.isArray(parsed.shots) ? parsed.shots : [];
-    state.brainstorm.html = sanitizeBrainstormHtml(parsed.brainstorm?.html || "");
-    state.view = ["grid", "list", "table"].includes(parsed.view) ? parsed.view : "grid";
+    const storedProjects = JSON.parse(localStorage.getItem(PROJECTS_KEY) || "[]");
+    state.projects = Array.isArray(storedProjects) ? storedProjects.map(normalizeProjectRecord) : [];
   } catch {
-    localStorage.removeItem(STORAGE_KEY);
+    state.projects = [];
+    localStorage.removeItem(PROJECTS_KEY);
+  }
+
+  const oldStored = localStorage.getItem(STORAGE_KEY);
+  if (!state.projects.length && oldStored) {
+    try {
+      const parsed = JSON.parse(oldStored);
+      state.projects = [normalizeProjectRecord({ ...parsed, id: uid(), createdAt: new Date().toISOString() })];
+      saveProjects();
+    } catch {
+      localStorage.removeItem(STORAGE_KEY);
+    }
   }
 }
 
+function saveProjects() {
+  localStorage.setItem(PROJECTS_KEY, JSON.stringify(state.projects));
+}
+
 function saveProject() {
-  const payload = {
-    project: state.project,
-    shots: state.shots,
-    brainstorm: state.brainstorm,
-    view: state.view,
-    exportedAt: new Date().toISOString()
-  };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  const record = currentProjectRecord();
+  if (!record) return;
+
+  record.project = { ...state.project };
+  record.shots = state.shots;
+  record.brainstorm = { ...state.brainstorm };
+  record.view = state.view;
+  record.updatedAt = new Date().toISOString();
+  saveProjects();
+  renderHome();
   els.saveState.textContent = "Saved locally";
+}
+
+function openProject(id) {
+  const record = state.projects.find((project) => project.id === id);
+  if (!record) return;
+
+  state.currentProjectId = id;
+  state.project = { ...record.project };
+  state.shots = [...record.shots];
+  state.brainstorm = { html: sanitizeBrainstormHtml(record.brainstorm?.html || "") };
+  state.view = ["grid", "list", "table"].includes(record.view) ? record.view : "grid";
+  state.query = "";
+  els.search.value = "";
+  els.homeScreen.hidden = true;
+  els.workspaceShell.hidden = false;
+  els.exportBtn.hidden = false;
+  els.print.hidden = false;
+  render();
+  resetForm();
+}
+
+function showHome() {
+  state.currentProjectId = null;
+  els.workspaceShell.hidden = true;
+  els.homeScreen.hidden = false;
+  els.exportBtn.hidden = true;
+  els.print.hidden = true;
+  renderHome();
+}
+
+function createProject() {
+  const record = normalizeProjectRecord({
+    id: uid(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    project: { ...defaultProject(), title: "Untitled project", version: "v1" },
+    shots: [],
+    brainstorm: { html: "" },
+    view: "grid"
+  });
+  state.projects.unshift(record);
+  saveProjects();
+  openProject(record.id);
+}
+
+function deleteProject(id) {
+  const record = state.projects.find((project) => project.id === id);
+  if (!record) return;
+  const name = record.project.title || "Untitled project";
+  if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  state.projects = state.projects.filter((project) => project.id !== id);
+  saveProjects();
+  if (state.currentProjectId === id) showHome();
+  renderHome();
 }
 
 function serializeForm() {
@@ -385,6 +482,31 @@ function renderShotTable(shots) {
   els.shotTableBody.replaceChildren(...rows);
 }
 
+function renderHome() {
+  els.homeEmptyState.hidden = state.projects.length > 0;
+  const cards = state.projects.map((record) => {
+    const card = document.createElement("article");
+    card.className = "project-card";
+    const updated = new Date(record.updatedAt).toLocaleDateString([], {
+      year: "numeric",
+      month: "short",
+      day: "numeric"
+    });
+    card.innerHTML = `
+      <button class="project-card-main" type="button">
+        <span class="project-card-title">${escapeHtml(record.project.title || "Untitled project")}</span>
+        <span class="project-card-meta">${escapeHtml(record.project.client || "No client")} · ${record.shots.length} ${record.shots.length === 1 ? "shot" : "shots"}</span>
+        <span class="project-card-meta">${escapeHtml(record.project.version || "No version")} · ${record.project.format === "vertical" ? "Vertical 9:16" : "Horizontal 16:9"} · Updated ${updated}</span>
+      </button>
+      <button class="ghost project-delete" type="button">Delete</button>
+    `;
+    card.querySelector(".project-card-main").addEventListener("click", () => openProject(record.id));
+    card.querySelector(".project-delete").addEventListener("click", () => deleteProject(record.id));
+    return card;
+  });
+  els.projectList.replaceChildren(...cards);
+}
+
 function renderShotCard(shot) {
   const index = state.shots.indexOf(shot);
   const node = els.template.content.firstElementChild.cloneNode(true);
@@ -484,6 +606,27 @@ els.deleteShot.addEventListener("click", () => {
 
 els.resetForm.addEventListener("click", resetForm);
 
+els.newProject.addEventListener("click", createProject);
+
+els.backHome.addEventListener("click", () => {
+  saveProject();
+  showHome();
+});
+
+els.clearAll.addEventListener("click", () => {
+  const confirmed = confirm("Clear all projects and saved content from this browser? This cannot be undone.");
+  if (!confirmed) return;
+  state.projects = [];
+  state.currentProjectId = null;
+  localStorage.removeItem(PROJECTS_KEY);
+  localStorage.removeItem(STORAGE_KEY);
+  state.project = defaultProject();
+  state.shots = [];
+  state.brainstorm = { html: "" };
+  resetForm();
+  showHome();
+});
+
 els.imageInput.addEventListener("change", async (event) => {
   const file = event.target.files[0];
   if (!file) return;
@@ -576,21 +719,15 @@ els.importInput.addEventListener("change", async (event) => {
   if (!file) return;
   const text = await file.text();
   const imported = JSON.parse(text);
-  state.project = { ...state.project, ...imported.project };
-  state.project.format = state.project.format === "vertical" ? "vertical" : "horizontal";
-  state.project.printProfile = state.project.printProfile === "internal" ? "internal" : "client";
-  if (Array.isArray(imported.shots)) {
-    state.shots = imported.shots;
-  }
-  if (imported.brainstorm) {
-    state.brainstorm.html = sanitizeBrainstormHtml(imported.brainstorm.html || "");
-  }
-  state.view = ["grid", "list", "table"].includes(imported.view) ? imported.view : "grid";
-  state.query = "";
-  els.search.value = "";
-  saveProject();
-  render();
-  resetForm();
+  const record = normalizeProjectRecord({
+    ...imported,
+    id: uid(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+  state.projects.unshift(record);
+  saveProjects();
+  openProject(record.id);
   event.target.value = "";
 });
 
@@ -646,6 +783,7 @@ els.exportBrainstorm.addEventListener("click", () => {
   exportBrainstormHtml();
 });
 
-loadProject();
-render();
+loadProjects();
+renderHome();
+showHome();
 resetForm();
