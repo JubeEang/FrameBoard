@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Frameboard Studio</title>
+    <title>Frameboard 2.0</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <header class="topbar">
       <div>
         <p class="eyebrow">Creative direction storyboard</p>
-        <h1>Frameboard Studio</h1>
+        <h1>Frameboard Studio <span class="version-badge">2.0</span></h1>
       </div>
       <div class="topbar-actions">
         <button class="ghost" id="importBtn" type="button" title="Import project">
@@ -36,9 +36,18 @@
         </div>
         <div class="home-actions">
           <button class="primary" id="newProjectBtn" type="button">New project</button>
+          <button class="ghost" id="trashBtn" type="button" hidden>Recently deleted</button>
           <button class="danger" id="clearAllBtn" type="button">Clear all content</button>
         </div>
       </div>
+      <p id="storageNote" class="storage-note" hidden></p>
+      <section id="trashPanel" class="trash-panel" aria-label="Recently deleted projects" hidden>
+        <div class="trash-heading">
+          <h3>Recently deleted</h3>
+          <button class="ghost" id="closeTrashBtn" type="button">Close</button>
+        </div>
+        <ul id="trashList" class="trash-list"></ul>
+      </section>
       <div id="projectList" class="project-list" aria-live="polite"></div>
       <div id="homeEmptyState" class="empty-state">
         <h2>No projects yet.</h2>
@@ -184,7 +193,7 @@
 
         <div class="board-meta">
           <span id="shotCount">0 shots</span>
-          <span id="saveState">Saved locally</span>
+          <span id="saveState">Saved</span>
         </div>
 
         <div id="emptyState" class="empty-state">
@@ -275,6 +284,7 @@
       </article>
     </template>
 
+    <script src="config.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

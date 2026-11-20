@@ -30,6 +30,11 @@ const els = {
   homeEmptyState: document.querySelector("#homeEmptyState"),
   newProject: document.querySelector("#newProjectBtn"),
   clearAll: document.querySelector("#clearAllBtn"),
+  trashBtn: document.querySelector("#trashBtn"),
+  trashPanel: document.querySelector("#trashPanel"),
+  trashList: document.querySelector("#trashList"),
+  closeTrash: document.querySelector("#closeTrashBtn"),
+  storageNote: document.querySelector("#storageNote"),
   backHome: document.querySelector("#backHomeBtn"),
   form: document.querySelector("#shotForm"),
   formTitle: document.querySelector("#formTitle"),
@@ -83,6 +88,523 @@ function uid() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+// ---------------------------------------------------------------------------
+// Storage: shared cloud board (Supabase) or this browser (IndexedDB)
+// ---------------------------------------------------------------------------
+
+const CLOUD = (() => {
+  const config = window.FRAMEBOARD_CONFIG || {};
+  const url = String(config.supabaseUrl || "").trim().replace(/\/+$/, "");
+  const key = String(config.supabaseKey || "").trim();
+  if (!url || !key) return null;
+  return { url, key, bucket: String(config.imageBucket || "frameboard-images").trim() };
+})();
+
+const IDB_NAME = "frameboard-studio";
+const IDB_STORE = "kv";
+const IDB_KEY = "projects";
+const MIGRATED_KEY = "frameboard-cloud-migrated";
+const POLL_MS = 4000;
+
+let storageReady = false;
+let cloudMode = false;
+let cloudUnreachable = false;
+let persistTimer = null;
+let persisting = false;
+let persistAgain = false;
+let polling = false;
+let lastLocalEdit = 0;
+const BUSY_MS = 5000;
+const synced = new Map();
+
+function cloudHeaders(extra = {}) {
+  const headers = { apikey: CLOUD.key, ...extra };
+  if (CLOUD.key.startsWith("eyJ")) headers.Authorization = `Bearer ${CLOUD.key}`;
+  return headers;
+}
+
+async function cloudFetch(path, options = {}) {
+  const response = await fetch(`${CLOUD.url}${path}`, {
+    ...options,
+    headers: cloudHeaders(options.headers || {})
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    const error = new Error(`${response.status} ${text}`);
+    error.status = response.status;
+    error.body = text;
+    throw error;
+  }
+  return response;
+}
+
+async function detectCloud() {
+  if (!CLOUD) return null;
+  try {
+    const response = await cloudFetch("/rest/v1/projects?select=id,rev,record");
+    return await response.json();
+  } catch (error) {
+    console.warn("Frameboard: shared storage unavailable", error);
+    cloudUnreachable = true;
+    return null;
+  }
+}
+
+function openIdb() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error("IndexedDB unavailable"));
+      return;
+    }
+    const request = indexedDB.open(IDB_NAME, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(IDB_STORE);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function idbRequest(mode, run) {
+  const db = await openIdb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, mode);
+    const request = run(tx.objectStore(IDB_STORE));
+    tx.oncomplete = () => resolve(request.result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+function readLegacyLocalStorage() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(PROJECTS_KEY) || "[]");
+    if (Array.isArray(stored) && stored.length) return stored;
+    const oldSingle = localStorage.getItem(STORAGE_KEY);
+    if (oldSingle) return [{ ...JSON.parse(oldSingle), id: uid(), createdAt: new Date().toISOString() }];
+  } catch {
+    // ignore unreadable data
+  }
+  return [];
+}
+
+async function readStoredProjects() {
+  try {
+    const stored = await idbRequest("readonly", (store) => store.get(IDB_KEY));
+    if (Array.isArray(stored)) return stored;
+  } catch (error) {
+    console.warn("Frameboard: IndexedDB read failed", error);
+  }
+  return readLegacyLocalStorage();
+}
+
+async function writeStoredProjects() {
+  const records = JSON.parse(JSON.stringify(state.projects));
+  try {
+    await idbRequest("readwrite", (store) => store.put(records, IDB_KEY));
+  } catch (error) {
+    console.warn("Frameboard: IndexedDB write failed, using localStorage", error);
+    localStorage.setItem(PROJECTS_KEY, JSON.stringify(records));
+  }
+}
+
+async function clearStoredProjects() {
+  try {
+    await idbRequest("readwrite", (store) => store.delete(IDB_KEY));
+  } catch {
+    // ignore
+  }
+  localStorage.removeItem(PROJECTS_KEY);
+  localStorage.removeItem(STORAGE_KEY);
+}
+
+async function loadProjects() {
+  const rows = await detectCloud();
+  if (rows) {
+    cloudMode = true;
+    document.body.dataset.storage = "cloud";
+    state.projects = rows.map((row) => {
+      const record = normalizeProjectRecord({ ...row.record, id: row.id });
+      synced.set(row.id, { rev: row.rev, updatedAt: record.updatedAt, syncedAt: Date.now() });
+      return record;
+    });
+    await offerLocalMigration(new Set(rows.map((row) => row.id)));
+    window.setInterval(cloudPoll, POLL_MS);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) cloudPoll();
+    });
+  } else {
+    document.body.dataset.storage = "local";
+    const stored = await readStoredProjects();
+    state.projects = stored.map(normalizeProjectRecord);
+  }
+  updateStorageUi();
+}
+
+async function offerLocalMigration(remoteIds) {
+  if (localStorage.getItem(MIGRATED_KEY)) return;
+  const local = (await readStoredProjects()).filter((record) => record && !remoteIds.has(record.id));
+  if (!local.length) return;
+  const plural = local.length === 1 ? "board" : "boards";
+  const copy = confirm(
+    `This browser has ${local.length} ${plural} saved from the old local-only version.\n\nCopy ${local.length === 1 ? "it" : "them"} to the shared board so everyone with the link can see ${local.length === 1 ? "it" : "them"}?`
+  );
+  localStorage.setItem(MIGRATED_KEY, new Date().toISOString());
+  if (!copy) return;
+  local.forEach((record) => state.projects.unshift(normalizeProjectRecord(record)));
+  schedulePersist();
+}
+
+function updateStorageUi() {
+  const note = els.storageNote;
+  note.classList.remove("is-warning");
+  if (cloudMode) {
+    note.textContent = "Shared board: anyone with this link can view and edit these projects. Changes sync automatically.";
+    note.hidden = false;
+  } else if (cloudUnreachable) {
+    note.textContent = "Couldn't reach the shared board, so you're working in this browser only. Changes made now won't be shared. Reload to try again.";
+    note.classList.add("is-warning");
+    note.hidden = false;
+  } else {
+    note.textContent = "Projects are saved in this browser only.";
+    note.hidden = false;
+  }
+  els.clearAll.hidden = cloudMode;
+  els.trashBtn.hidden = !cloudMode;
+  setSaveState(cloudMode ? "Synced" : "Saved locally");
+}
+
+function setSaveState(text) {
+  els.saveState.textContent = text;
+}
+
+function isDirty(record) {
+  const info = synced.get(record.id);
+  return !info || info.updatedAt !== record.updatedAt;
+}
+
+function schedulePersist() {
+  if (cloudMode) setSaveState("Saving…");
+  window.clearTimeout(persistTimer);
+  persistTimer = window.setTimeout(() => {
+    persistTimer = null;
+    runPersist();
+  }, cloudMode ? 700 : 250);
+}
+
+async function runPersist() {
+  if (persisting) {
+    persistAgain = true;
+    return;
+  }
+  persisting = true;
+  try {
+    if (cloudMode) {
+      await cloudPush();
+      if (!persistTimer) setSaveState("Synced");
+    } else {
+      await writeStoredProjects();
+      setSaveState("Saved locally");
+    }
+  } catch (error) {
+    console.warn("Frameboard: save failed", error);
+    setSaveState(cloudMode ? "Offline: retrying…" : "Save failed");
+    if (cloudMode && !persistTimer) {
+      persistTimer = window.setTimeout(() => {
+        persistTimer = null;
+        runPersist();
+      }, 5000);
+    }
+  } finally {
+    persisting = false;
+    if (persistAgain) {
+      persistAgain = false;
+      runPersist();
+    }
+  }
+}
+
+function serializeRecord(record) {
+  return {
+    id: record.id,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    project: record.project,
+    shots: record.shots,
+    brainstorm: record.brainstorm,
+    view: record.view
+  };
+}
+
+async function cloudPush() {
+  for (const record of state.projects.filter(isDirty)) {
+    const stamp = record.updatedAt;
+    await externalizeImages(record);
+    const response = await cloudFetch("/rest/v1/projects?on_conflict=id&select=rev", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates,return=representation"
+      },
+      body: JSON.stringify({ id: record.id, record: serializeRecord(record) })
+    });
+    const [row] = await response.json();
+    synced.set(record.id, { rev: row?.rev ?? 0, updatedAt: stamp, syncedAt: Date.now() });
+  }
+
+  const localIds = new Set(state.projects.map((record) => record.id));
+  for (const id of [...synced.keys()]) {
+    if (localIds.has(id)) continue;
+    await cloudFetch(`/rest/v1/projects?id=eq.${encodeURIComponent(id)}`, { method: "DELETE" });
+    synced.delete(id);
+  }
+}
+
+function userIsBusyIn(record) {
+  if (!record || record.id !== state.currentProjectId) return false;
+  if (Date.now() - lastLocalEdit > BUSY_MS) return false;
+  const active = document.activeElement;
+  return Boolean(active && (els.brainstormEditor.contains(active) || active.closest?.(".project-bar")));
+}
+
+async function cloudPoll() {
+  if (!cloudMode || document.hidden || polling || persisting || persistTimer) return;
+  polling = true;
+  const pollStart = Date.now();
+  try {
+    const rows = await (await cloudFetch("/rest/v1/projects?select=id,rev")).json();
+    if (persisting || persistTimer) return;
+    const remote = new Map(rows.map((row) => [row.id, row.rev]));
+
+    let removed = false;
+    for (const [id, info] of [...synced]) {
+      if (remote.has(id) || info.syncedAt >= pollStart) continue;
+      const record = state.projects.find((item) => item.id === id);
+      if (record && isDirty(record)) continue;
+      synced.delete(id);
+      state.projects = state.projects.filter((item) => item.id !== id);
+      removed = true;
+      if (state.currentProjectId === id) {
+        showHome();
+        alert("This project was deleted by someone else. You can restore it from \"Recently deleted\".");
+      }
+    }
+
+    const changed = rows.filter((row) => synced.get(row.id)?.rev !== row.rev).map((row) => row.id);
+    if (changed.length) {
+      const list = changed.map((id) => `"${String(id).replace(/"/g, '\\"')}"`).join(",");
+      const fresh = await (await cloudFetch(`/rest/v1/projects?select=id,rev,record&id=in.(${encodeURIComponent(list)})`)).json();
+      if (persisting || persistTimer) return;
+      for (const row of fresh) {
+        const local = state.projects.find((item) => item.id === row.id);
+        if (local && isDirty(local)) continue;
+        if (userIsBusyIn(local)) continue;
+        applyRemoteRecord(row);
+      }
+    }
+
+    if (removed || changed.length) renderHome();
+  } catch (error) {
+    console.warn("Frameboard: poll failed", error);
+  } finally {
+    polling = false;
+  }
+}
+
+function applyRemoteRecord(row) {
+  const record = normalizeProjectRecord({ ...row.record, id: row.id });
+  const index = state.projects.findIndex((item) => item.id === row.id);
+  if (index >= 0) state.projects[index] = record;
+  else state.projects.unshift(record);
+  synced.set(row.id, { rev: row.rev, updatedAt: record.updatedAt, syncedAt: Date.now() });
+
+  if (state.currentProjectId === row.id) {
+    state.project = { ...record.project };
+    state.shots = [...record.shots];
+    state.brainstorm = { html: record.brainstorm.html };
+    state.view = record.view;
+    render();
+  }
+}
+
+// --- Images -----------------------------------------------------------------
+
+function publicImageBase() {
+  return `${CLOUD.url}/storage/v1/object/public/${CLOUD.bucket}/`;
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [header, data] = dataUrl.split(",");
+  const mime = (header.match(/^data:([^;]+)/) || [])[1] || "image/jpeg";
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+async function blobName(blob) {
+  const ext = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" }[blob.type] || "jpg";
+  let hash;
+  if (crypto.subtle) {
+    const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+    hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  } else {
+    hash = uid().replace(/[^a-z0-9]/gi, "");
+  }
+  return `${hash}.${ext}`;
+}
+
+const uploadedImages = new Map();
+
+async function uploadDataUrl(dataUrl) {
+  if (uploadedImages.has(dataUrl)) return uploadedImages.get(dataUrl);
+  const blob = dataUrlToBlob(dataUrl);
+  const name = await blobName(blob);
+  try {
+    await cloudFetch(`/storage/v1/object/${CLOUD.bucket}/${name}`, {
+      method: "POST",
+      headers: { "Content-Type": blob.type, "Cache-Control": "31536000" },
+      body: blob
+    });
+  } catch (error) {
+    const duplicate = (error.status === 400 || error.status === 409) && /duplicate|already exists/i.test(error.body || "");
+    if (!duplicate) throw error;
+  }
+  const url = `${publicImageBase()}${name}`;
+  uploadedImages.set(dataUrl, url);
+  return url;
+}
+
+async function externalizeImages(record) {
+  const isCurrent = record.id === state.currentProjectId;
+
+  for (const shot of record.shots) {
+    if (!shot.image?.startsWith("data:")) continue;
+    const dataUrl = shot.image;
+    const url = await uploadDataUrl(dataUrl);
+    shot.image = url;
+    if (isCurrent) {
+      state.shots.forEach((item) => {
+        if (item.image === dataUrl) item.image = url;
+      });
+      if (state.draftImage === dataUrl) state.draftImage = url;
+    }
+  }
+
+  const html = record.brainstorm?.html || "";
+  if (!html.includes("data:image")) return;
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  for (const img of template.content.querySelectorAll('img[src^="data:"]')) {
+    const dataUrl = img.getAttribute("src");
+    const url = await uploadDataUrl(dataUrl);
+    img.setAttribute("src", url);
+    if (isCurrent) {
+      // Swap in place in the live editor so the cursor isn't lost.
+      els.brainstormEditor.querySelectorAll("img").forEach((live) => {
+        if (live.getAttribute("src") === dataUrl) live.setAttribute("src", url);
+      });
+    }
+  }
+  record.brainstorm = { html: template.innerHTML };
+  if (isCurrent) state.brainstorm.html = sanitizeBrainstormHtml(els.brainstormEditor.innerHTML);
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function inlineImagesInText(text) {
+  if (!CLOUD) return text;
+  const base = publicImageBase();
+  const pattern = new RegExp(`${base.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}[A-Za-z0-9._-]+`, "g");
+  const urls = [...new Set(text.match(pattern) || [])];
+  for (const url of urls) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) continue;
+      const dataUrl = await blobToDataUrl(await response.blob());
+      text = text.split(url).join(dataUrl);
+    } catch {
+      // leave the link in place
+    }
+  }
+  return text;
+}
+
+// --- Recently deleted -------------------------------------------------------
+
+async function openTrash() {
+  els.trashPanel.hidden = false;
+  els.trashList.innerHTML = "<li>Loading…</li>";
+  try {
+    const rows = await (await cloudFetch("/rest/v1/trash?select=id,project_id,record,deleted_at&order=deleted_at.desc&limit=50")).json();
+    if (!rows.length) {
+      els.trashList.innerHTML = "<li>Nothing deleted recently.</li>";
+      return;
+    }
+    els.trashList.replaceChildren(...rows.map(renderTrashRow));
+  } catch (error) {
+    els.trashList.innerHTML = `<li>Couldn't load deleted projects (${escapeHtml(error.message.slice(0, 120))}).</li>`;
+  }
+}
+
+function renderTrashRow(row) {
+  const item = document.createElement("li");
+  const project = row.record?.project || {};
+  const shots = Array.isArray(row.record?.shots) ? row.record.shots.length : 0;
+  const when = new Date(row.deleted_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  item.innerHTML = `
+    <div>
+      <strong>${escapeHtml(project.title || "Untitled project")}</strong>
+      <div class="trash-meta">${escapeHtml(project.client || "No client")} · ${shots} ${shots === 1 ? "shot" : "shots"} · Deleted ${escapeHtml(when)}</div>
+    </div>
+    <button class="primary" type="button">Restore</button>
+  `;
+  const button = item.querySelector("button");
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = "Restoring…";
+    try {
+      await restoreFromTrash(row);
+      item.remove();
+      if (!els.trashList.children.length) els.trashList.innerHTML = "<li>Nothing deleted recently.</li>";
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "Restore";
+      alert(`Couldn't restore: ${error.message.slice(0, 200)}`);
+    }
+  });
+  return item;
+}
+
+async function restoreFromTrash(row) {
+  const record = normalizeProjectRecord({ ...row.record, id: row.project_id, updatedAt: new Date().toISOString() });
+  const response = await cloudFetch("/rest/v1/projects?on_conflict=id&select=id,rev,record", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates,return=representation"
+    },
+    body: JSON.stringify({ id: record.id, record: serializeRecord(record) })
+  });
+  const [saved] = await response.json();
+  await cloudFetch(`/rest/v1/trash?id=eq.${encodeURIComponent(row.id)}`, { method: "DELETE" });
+  applyRemoteRecord(saved);
+  renderHome();
+}
+
+window.addEventListener("beforeunload", (event) => {
+  if (!cloudMode) return;
+  if (persistTimer || persisting || state.projects.some(isDirty)) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
+
 function normalizeProjectRecord(record) {
   const project = { ...defaultProject(), ...record.project };
   project.format = project.format === "vertical" ? "vertical" : "horizontal";
@@ -92,7 +614,7 @@ function normalizeProjectRecord(record) {
     createdAt: record.createdAt || new Date().toISOString(),
     updatedAt: record.updatedAt || new Date().toISOString(),
     project,
-    shots: Array.isArray(record.shots) ? record.shots : [],
+    shots: Array.isArray(record.shots) ? record.shots.filter(Boolean).map(normalizeShot) : [],
     brainstorm: {
       html: sanitizeBrainstormHtml(record.brainstorm?.html || "")
     },
@@ -100,47 +622,39 @@ function normalizeProjectRecord(record) {
   };
 }
 
+function safeImageSrc(value) {
+  const src = String(value || "");
+  if (/^data:image\//i.test(src) || /^https:\/\//i.test(src)) return src;
+  return CLOUD && src.startsWith(publicImageBase()) ? src : "";
+}
+
+function normalizeShot(shot) {
+  return { ...shot, id: shot.id || uid(), image: safeImageSrc(shot.image) };
+}
+
 function currentProjectRecord() {
   return state.projects.find((project) => project.id === state.currentProjectId);
 }
 
-function loadProjects() {
-  try {
-    const storedProjects = JSON.parse(localStorage.getItem(PROJECTS_KEY) || "[]");
-    state.projects = Array.isArray(storedProjects) ? storedProjects.map(normalizeProjectRecord) : [];
-  } catch {
-    state.projects = [];
-    localStorage.removeItem(PROJECTS_KEY);
-  }
-
-  const oldStored = localStorage.getItem(STORAGE_KEY);
-  if (!state.projects.length && oldStored) {
-    try {
-      const parsed = JSON.parse(oldStored);
-      state.projects = [normalizeProjectRecord({ ...parsed, id: uid(), createdAt: new Date().toISOString() })];
-      saveProjects();
-    } catch {
-      localStorage.removeItem(STORAGE_KEY);
-    }
-  }
-}
-
 function saveProjects() {
-  localStorage.setItem(PROJECTS_KEY, JSON.stringify(state.projects));
+  schedulePersist();
 }
 
 function saveProject() {
   const record = currentProjectRecord();
   if (!record) return;
 
+  const before = JSON.stringify([record.project, record.shots, record.brainstorm, record.view]);
+  const after = JSON.stringify([state.project, state.shots, state.brainstorm, state.view]);
+  if (before === after) return;
+
+  lastLocalEdit = Date.now();
   record.project = { ...state.project };
-  record.shots = state.shots;
+  record.shots = state.shots.map((shot) => ({ ...shot }));
   record.brainstorm = { ...state.brainstorm };
   record.view = state.view;
   record.updatedAt = new Date().toISOString();
-  saveProjects();
-  renderHome();
-  els.saveState.textContent = "Saved locally";
+  schedulePersist();
 }
 
 function openProject(id) {
@@ -190,7 +704,10 @@ function deleteProject(id) {
   const record = state.projects.find((project) => project.id === id);
   if (!record) return;
   const name = record.project.title || "Untitled project";
-  if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  const message = cloudMode
+    ? `Delete "${name}" for everyone? You can restore it from "Recently deleted".`
+    : `Delete "${name}"? This cannot be undone.`;
+  if (!confirm(message)) return;
   state.projects = state.projects.filter((project) => project.id !== id);
   saveProjects();
   if (state.currentProjectId === id) showHome();
@@ -372,9 +889,10 @@ function projectPayload(include) {
   return payload;
 }
 
-function exportJson(include, suffix) {
+async function exportJson(include, suffix) {
   const filename = `${projectFilename("frameboard")}-${suffix}.json`;
-  downloadFile(filename, JSON.stringify(projectPayload(include), null, 2), "application/json");
+  const text = await inlineImagesInText(JSON.stringify(projectPayload(include), null, 2));
+  downloadFile(filename, text, "application/json");
 }
 
 function csvCell(value) {
@@ -411,9 +929,9 @@ function exportShotListCsv() {
   downloadFile(`${projectFilename("shot-list")}-shot-list.csv`, csv, "text/csv");
 }
 
-function exportBrainstormHtml() {
+async function exportBrainstormHtml() {
   const title = escapeHtml(state.project.title || "Frameboard brainstorm");
-  const content = sanitizeBrainstormHtml(state.brainstorm.html || els.brainstormEditor.innerHTML);
+  const content = await inlineImagesInText(sanitizeBrainstormHtml(state.brainstorm.html || els.brainstormEditor.innerHTML));
   const documentHtml = `<!doctype html>
 <html lang="en">
 <head>
@@ -483,8 +1001,9 @@ function renderShotTable(shots) {
 }
 
 function renderHome() {
-  els.homeEmptyState.hidden = state.projects.length > 0;
-  const cards = state.projects.map((record) => {
+  els.homeEmptyState.hidden = !storageReady || state.projects.length > 0;
+  const sorted = [...state.projects].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const cards = sorted.map((record) => {
     const card = document.createElement("article");
     card.className = "project-card";
     const updated = new Date(record.updatedAt).toLocaleDateString([], {
@@ -618,8 +1137,9 @@ els.clearAll.addEventListener("click", () => {
   if (!confirmed) return;
   state.projects = [];
   state.currentProjectId = null;
-  localStorage.removeItem(PROJECTS_KEY);
-  localStorage.removeItem(STORAGE_KEY);
+  window.clearTimeout(persistTimer);
+  persistTimer = null;
+  clearStoredProjects();
   state.project = defaultProject();
   state.shots = [];
   state.brainstorm = { html: "" };
@@ -717,8 +1237,14 @@ els.importBtn.addEventListener("click", () => els.importInput.click());
 els.importInput.addEventListener("change", async (event) => {
   const file = event.target.files[0];
   if (!file) return;
-  const text = await file.text();
-  const imported = JSON.parse(text);
+  event.target.value = "";
+  let imported;
+  try {
+    imported = JSON.parse(await file.text());
+  } catch {
+    alert("That file isn't a valid Frameboard JSON export.");
+    return;
+  }
   const record = normalizeProjectRecord({
     ...imported,
     id: uid(),
@@ -783,7 +1309,18 @@ els.exportBrainstorm.addEventListener("click", () => {
   exportBrainstormHtml();
 });
 
-loadProjects();
-renderHome();
+els.trashBtn.addEventListener("click", () => {
+  if (els.trashPanel.hidden) openTrash();
+  else els.trashPanel.hidden = true;
+});
+
+els.closeTrash.addEventListener("click", () => {
+  els.trashPanel.hidden = true;
+});
+
 showHome();
 resetForm();
+loadProjects().finally(() => {
+  storageReady = true;
+  renderHome();
+});
