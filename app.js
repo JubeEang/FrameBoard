@@ -103,7 +103,7 @@ const CLOUD = (() => {
 const IDB_NAME = "frameboard-studio";
 const IDB_STORE = "kv";
 const IDB_KEY = "projects";
-const MIGRATED_KEY = "frameboard-cloud-migrated";
+const MIGRATED_KEY = "frameboard-cloud-migrated-v2";
 const POLL_MS = 4000;
 
 let storageReady = false;
@@ -113,6 +113,8 @@ let persistTimer = null;
 let persisting = false;
 let persistAgain = false;
 let polling = false;
+let migrationPending = false;
+let syncFailing = false;
 let lastLocalEdit = 0;
 const BUSY_MS = 5000;
 const synced = new Map();
@@ -247,8 +249,11 @@ async function offerLocalMigration(remoteIds) {
   const copy = confirm(
     `This browser has ${local.length} ${plural} saved from the old local-only version.\n\nCopy ${local.length === 1 ? "it" : "them"} to the shared board so everyone with the link can see ${local.length === 1 ? "it" : "them"}?`
   );
-  localStorage.setItem(MIGRATED_KEY, new Date().toISOString());
-  if (!copy) return;
+  if (!copy) {
+    localStorage.setItem(MIGRATED_KEY, "declined");
+    return;
+  }
+  migrationPending = true;
   local.forEach((record) => state.projects.unshift(normalizeProjectRecord(record)));
   schedulePersist();
 }
@@ -299,14 +304,27 @@ async function runPersist() {
   try {
     if (cloudMode) {
       await cloudPush();
+      if (migrationPending) {
+        migrationPending = false;
+        localStorage.setItem(MIGRATED_KEY, new Date().toISOString());
+      }
       if (!persistTimer) setSaveState("Synced");
+      if (syncFailing) {
+        syncFailing = false;
+        updateStorageUi();
+      }
     } else {
       await writeStoredProjects();
       setSaveState("Saved locally");
     }
   } catch (error) {
     console.warn("Frameboard: save failed", error);
-    setSaveState(cloudMode ? "Offline: retrying…" : "Save failed");
+    setSaveState(cloudMode ? "Not saved: retrying…" : "Save failed");
+    if (cloudMode && !syncFailing) {
+      syncFailing = true;
+      els.storageNote.textContent = `Changes aren't reaching the shared board (${String(error.message).slice(0, 140)}). Keep this tab open: it retries every few seconds.`;
+      els.storageNote.classList.add("is-warning");
+    }
     if (cloudMode && !persistTimer) {
       persistTimer = window.setTimeout(() => {
         persistTimer = null;

@@ -13,6 +13,9 @@ create table if not exists public.projects (
   updated_at  timestamptz not null default now(),
   snapshot_at timestamptz
 );
+-- Older setups created snapshot_at as NOT NULL; make sure inserts work either way.
+alter table public.projects alter column snapshot_at drop not null;
+alter table public.projects alter column snapshot_at set default now();
 
 create table if not exists public.project_history (
   id         bigserial primary key,
@@ -44,7 +47,7 @@ as $$
 begin
   if tg_op = 'INSERT' then
     new.rev := 1;
-    new.snapshot_at := null;
+    new.snapshot_at := now();
   else
     new.rev := old.rev + 1;
     new.snapshot_at := old.snapshot_at;
