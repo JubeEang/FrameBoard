@@ -5,6 +5,6 @@
 // "anon" key. Never put the secret / service_role key here: this file is public.
 window.FRAMEBOARD_CONFIG = {
   supabaseUrl: "https://snlvevrfkjtvmlpvrrif.supabase.co",
-  supabaseKey: "",
+  supabaseKey: "sb_publishable_2OnC9P75ChaKTgtzcQsWQA_feKcGjyt",
   imageBucket: "frameboard-images"
 };
